@@ -153,6 +153,13 @@
   .history-grid span { color: var(--text-muted); }
   .history-grid strong { color: var(--text); font-weight: 500; }
   .sign-thumb { width: 100%; margin-top: 10px; border-radius: 6px; border: 1px solid var(--border); max-height: 60px; object-fit: contain; background: #fafafa; display: none; }
+  .photo-upload-area { border: 2px dashed var(--border); border-radius: var(--radius-sm); padding: 16px; text-align: center; cursor: pointer; background: #fafafa; transition: background 0.15s; }
+  .photo-upload-area:active { background: #f0f0f0; }
+  .photo-upload-input { display: none; }
+  .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+  .photo-thumb-wrap { position: relative; aspect-ratio: 1; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); }
+  .photo-thumb-wrap img { width: 100%; height: 100%; object-fit: cover; }
+  .photo-remove { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; }
   
   /* CUSTOMERS */
   .cust-card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); padding: 14px; margin-bottom: 10px; cursor: pointer; }
@@ -235,9 +242,12 @@
       <div class="section-title">การเชื่อมต่อ Google Sheets</div>
       <div class="config-card">
         <div class="config-title"><span class="status-dot" id="connDot"></span><span id="connStatus">ยังไม่ได้เชื่อมต่อ</span></div>
-        <input class="config-input" id="scriptUrl" placeholder="วาง Google Apps Script URL ที่นี่" />
-        <button class="config-save" onclick="saveScript()">บันทึกและเชื่อมต่อ</button>
-        <div class="config-hint">วิธีสร้าง Script URL — ดูคำแนะนำด้านล่าง หรือใช้งาน Offline ได้เลย ข้อมูลจะบันทึกในเครื่องก่อน</div>
+        <div id="urlInputWrap" style="display:none">
+          <input class="config-input" id="scriptUrlInput" placeholder="วาง Google Apps Script URL ที่นี่" />
+          <button class="config-save" onclick="saveScript()">บันทึกและเชื่อมต่อ</button>
+        </div>
+        <button class="config-save" id="toggleUrlBtn" onclick="toggleUrlInput()" style="margin-top:8px;opacity:0.7;font-size:12px">ตั้งค่า URL</button>
+        <div class="config-hint" id="connHint">ข้อมูลบันทึกในเครื่องระหว่างรอเชื่อมต่อ</div>
       </div>
     </div>
 
@@ -316,6 +326,16 @@
         </div>
       </div>
 
+      <div class="form-card">
+        <div class="form-card-title">รูปภาพประกอบ (ไม่บังคับ)</div>
+        <div class="photo-upload-area" onclick="document.getElementById('photoInput').click()">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style="margin:0 auto 6px;display:block"><rect x="3" y="5" width="18" height="14" rx="2" stroke="#9ca3af" stroke-width="1.5"/><circle cx="12" cy="12" r="3" stroke="#9ca3af" stroke-width="1.5"/><path d="M3 9l4-4 3 3 4-5 4 4" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div style="font-size:13px;color:var(--text-muted)">แตะเพื่อถ่ายรูปหรือเลือกจากคลัง</div>
+          <div style="font-size:11px;color:var(--text-light);margin-top:3px">สูงสุด 5 รูป</div>
+        </div>
+        <input type="file" id="photoInput" class="photo-upload-input" accept="image/*" multiple capture="environment" onchange="addPhotos(this)" />
+        <div class="photo-grid" id="photoGrid"></div>
+      </div>
       <button class="btn-primary" onclick="submitForm()">บันทึกการบริการ</button>
       <button class="btn-secondary" onclick="goBack()">ยกเลิก</button>
       <div style="height:16px"></div>
@@ -398,10 +418,14 @@ let customers = JSON.parse(localStorage.getItem('gpn_customers') || JSON.stringi
   {contract:'GPN24-009',name:'คุณวิชัย สมบูรณ์',phase:'LZ',plot:'55',phone:'089-123-4567',startDate:'2025-02-10',total:5},
   {contract:'GPN24-012',name:'คุณประเสริฐ มั่นคง',phase:'LZ',plot:'22',phone:'085-987-6543',startDate:'2025-03-01',total:5},
 ]));
-let scriptUrl = localStorage.getItem('gpn_script') || '';
+// ===== ตั้งค่า Script URL ที่นี่ (ใส่ครั้งเดียว ใช้ได้ทุกเครื่อง) =====
+const SCRIPT_URL_DEFAULT = 'https://script.google.com/macros/s/AKfycbwZ6mYR1n7bbSCvzYCXmNLMmFccy1akYofQiefAHZasqkpmk-KJz-gHJvjKtkLlxREA/exec';
+// ========================================================================
+let scriptUrl = SCRIPT_URL_DEFAULT || localStorage.getItem('gpn_script') || '';
 let selectedRound = '';
 let filterMode = 'all';
 let signHasData = false;
+let photoDataList = [];
 let isDrawing = false;
 let lastX, lastY;
 let canvas, ctx;
@@ -431,14 +455,28 @@ function updateContractList() {
 function updateConnStatus() {
   const dot = document.getElementById('connDot');
   const st = document.getElementById('connStatus');
-  const inp = document.getElementById('scriptUrl');
+  const hint = document.getElementById('connHint');
+  const toggleBtn = document.getElementById('toggleUrlBtn');
   if (scriptUrl) {
     dot.className = 'status-dot dot-online';
-    st.textContent = 'เชื่อมต่อแล้ว';
-    inp.value = scriptUrl;
+    st.textContent = 'เชื่อมต่อ Google Sheets แล้ว';
+    if(hint) hint.textContent = 'ข้อมูลส่งขึ้น Sheets อัตโนมัติ';
+    if(toggleBtn) toggleBtn.textContent = 'เปลี่ยน URL';
   } else {
     dot.className = 'status-dot dot-offline';
-    st.textContent = 'ยังไม่ได้เชื่อมต่อ (บันทึกในเครื่อง)';
+    st.textContent = 'ยังไม่ได้เชื่อมต่อ';
+    if(hint) hint.textContent = 'ข้อมูลบันทึกในเครื่องระหว่างรอเชื่อมต่อ';
+    if(toggleBtn) toggleBtn.textContent = 'ตั้งค่า URL';
+  }
+}
+function toggleUrlInput() {
+  const wrap = document.getElementById('urlInputWrap');
+  const inp = document.getElementById('scriptUrlInput');
+  if(wrap.style.display === 'none') {
+    wrap.style.display = 'block';
+    if(scriptUrl) inp.value = scriptUrl;
+  } else {
+    wrap.style.display = 'none';
   }
 }
 
@@ -462,7 +500,7 @@ function goTo(id) {
   document.getElementById('bottomNav').style.display = id === 'sc-success' ? 'none' : 'flex';
   document.getElementById('topAvatar').style.display = id === 'sc-success' ? 'none' : 'flex';
   document.getElementById('mainContent').scrollTop = 0;
-  if(id === 'sc-form') { setToday(); selectedRound = ''; document.querySelectorAll('.round-btn').forEach(b=>b.classList.remove('active')); signHasData=false; setTimeout(initCanvas, 80); }
+  if(id === 'sc-form') { setToday(); selectedRound = ''; document.querySelectorAll('.round-btn').forEach(b=>b.classList.remove('active')); signHasData=false; photoDataList=[]; document.getElementById('photoGrid').innerHTML=''; setTimeout(initCanvas, 80); }
   if(id === 'sc-history') renderHistory();
   if(id === 'sc-customers') renderCustomers();
 }
@@ -579,6 +617,35 @@ function clearSign() {
 }
 
 // ===== SUBMIT =====
+function addPhotos(input) {
+  const files = Array.from(input.files);
+  const remaining = 5 - photoDataList.length;
+  if(remaining <= 0) { showToast('เพิ่มได้สูงสุด 5 รูป'); return; }
+  files.slice(0, remaining).forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      photoDataList.push(e.target.result);
+      renderPhotoGrid();
+    };
+    reader.readAsDataURL(file);
+  });
+  input.value = '';
+}
+function removePhoto(idx) {
+  photoDataList.splice(idx, 1);
+  renderPhotoGrid();
+}
+function renderPhotoGrid() {
+  const grid = document.getElementById('photoGrid');
+  grid.innerHTML = photoDataList.map((src, i) => `
+    <div class="photo-thumb-wrap">
+      <img src="${src}" alt="รูป ${i+1}" />
+      <button class="photo-remove" onclick="removePhoto(${i})">×</button>
+    </div>`).join('');
+  const area = document.querySelector('.photo-upload-area');
+  if(area) area.style.display = photoDataList.length >= 5 ? 'none' : 'block';
+}
+
 function submitForm() {
   const contract = document.getElementById('f-contract').value.trim();
   const name = document.getElementById('f-name').value.trim();
@@ -600,6 +667,7 @@ function submitForm() {
     inspector: document.getElementById('f-inspector').value,
     note: document.getElementById('f-note').value,
     sign: signData,
+    photos: [...photoDataList],
     synced: false,
   };
   records.unshift(rec);
@@ -636,6 +704,7 @@ async function syncRecord(rec) {
         inspector: rec.inspector,
         note: rec.note,
         sign: rec.sign,
+        photos: rec.photos || [],
       }
     };
     await fetch(scriptUrl, {
@@ -690,6 +759,7 @@ function renderHistory() {
         <div><span>สถานะ </span><strong style="color:${r.synced?'var(--teal)':'var(--amber)'}">${r.synced?'ส่ง Sheets แล้ว':'เก็บในเครื่อง'}</strong></div>
       </div>
       ${r.sign ? `<img class="sign-thumb" src="${r.sign}" style="display:block" alt="ลายเซ็นต์" />` : ''}
+      ${r.photos && r.photos.length ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px">${r.photos.map((p,i)=>`<img src="${p}" alt="รูป${i+1}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;border:1px solid var(--border)">`).join('')}</div>` : ''}
     </div>`).join('');
 }
 
@@ -720,10 +790,11 @@ function renderCustomers() {
 
 // ===== SCRIPT CONFIG =====
 function saveScript() {
-  const url = document.getElementById('scriptUrl').value.trim();
+  const url = document.getElementById('scriptUrlInput').value.trim();
   if(!url) { showToast('กรุณากรอก URL'); return; }
   scriptUrl = url;
   localStorage.setItem('gpn_script', url);
+  document.getElementById('urlInputWrap').style.display = 'none';
   updateConnStatus();
   showToast('บันทึก URL แล้ว');
 }
